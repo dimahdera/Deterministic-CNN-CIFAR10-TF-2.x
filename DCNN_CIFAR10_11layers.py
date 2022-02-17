@@ -401,32 +401,92 @@ def main_function(input_dim=32,n_channels=3, num_kernels=[32, 32, 32, 32, 64, 64
     elif (Random_noise):
         test_path = 'test_results_random_noise_{}/'.format(gaussain_noise_std)
         cnn_model.load_weights(PATH + 'Deterministic_cnn_model')
-        test_no_steps = 0
-       
+        
+        no_samples = 20
         true_x = np.zeros([int(x_test.shape[0] / (batch_size)), batch_size, input_dim, input_dim, n_channels])
         true_y = np.zeros([int(x_test.shape[0] / (batch_size)), batch_size, class_num])
         out_ = np.zeros([int(x_test.shape[0] / (batch_size)), batch_size, class_num])        
-        acc_test = np.zeros(int(x_test.shape[0] / (batch_size)))
-        for step, (x, y) in enumerate(val_dataset):
-            update_progress(step / int(x_test.shape[0] / (batch_size)))
-            true_x[test_no_steps, :, :, :] = x
-            true_y[test_no_steps, :, :] = y
-            if Random_noise:
-                noise = tf.random.normal(shape=[batch_size, input_dim, input_dim, 1], mean=0.0,
+        acc_test = np.zeros([no_samples, int(x_test.shape[0] / (batch_size))])
+        for i in range(no_samples): 
+            test_no_steps = 0
+            for step, (x, y) in enumerate(val_dataset):
+                update_progress(step / int(x_test.shape[0] / (batch_size)))
+                true_x[test_no_steps, :, :, :] = x
+                true_y[test_no_steps, :, :] = y
+                if Random_noise:
+                   noise = tf.random.normal(shape=[batch_size, input_dim, input_dim, 1], mean=0.0,
                                          stddev=gaussain_noise_std, dtype=x.dtype)
-                x = x + noise
-            out   = test_on_batch(x, y)            
-            out_[test_no_steps, :, :] = out            
-            corr = tf.equal(tf.math.argmax(out, axis=-1), tf.math.argmax(y, axis=-1))
-            accuracy = tf.reduce_mean(tf.cast(corr, tf.float32))
-            acc_test[test_no_steps] = accuracy.numpy()            
-            test_no_steps += 1
+                   x = x + noise
+                out   = test_on_batch(x, y)            
+                out_[test_no_steps, :, :] = out            
+                corr = tf.equal(tf.math.argmax(out, axis=-1), tf.math.argmax(y, axis=-1))
+                accuracy = tf.reduce_mean(tf.cast(corr, tf.float32))
+                acc_test[i, test_no_steps] = accuracy.numpy()            
+                test_no_steps += 1
             
         test_acc = np.mean(np.amax(acc_test)  )      
-        print('Test accuracy : ', test_acc)        
+        print('Test accuracy : ', test_acc)  
+        test_acc_std = np.mean(np.std(acc_test, axis=0)  )             
+        print('STD Test Accuracy : ', test_acc_std )
 
         pf = open(PATH + test_path + 'info.pkl', 'wb')
         pickle.dump([out_, true_x, true_y, test_acc], pf)
+        pf.close()
+        sample_var = np.std(acc_test, axis=0)
+         
+        valid_size = x_test.shape[0]  
+        pred_var = np.zeros(int(valid_size ))   
+        true_var = np.zeros(int(valid_size )) 
+        correct_classification = np.zeros(int(valid_size)) 
+        misclassification_pred = np.zeros(int(valid_size )) 
+        misclassification_true = np.zeros(int(valid_size )) 
+        predicted_out = np.zeros(int(valid_size )) 
+        true_out = np.zeros(int(valid_size )) 
+        k=0   
+        k1=0
+        k2=0  
+        correct_classification1 = 0
+        misclassification_pred1 = 0
+        misclassification_true1 = 0
+        for i in range(int(valid_size /batch_size)):
+            for j in range(batch_size):               
+                predicted_out[k] = np.argmax(out_[i,j,:])
+                true_out[k] = np.argmax(true_y[i,j,:])
+                pred_var[k] =   sample_var[k]  
+               # true_var[k] = sigma_[i,j, int(true_out[k]), int(true_out[k])]  
+                if (predicted_out[k] == true_out[k]):
+                    correct_classification[k1] = sample_var[k] 
+                    correct_classification1 +=  sample_var[k] 
+                    k1=k1+1
+                if (predicted_out[k] != true_out[k]):
+                    misclassification_pred[k2] = sample_var[k]  
+                    misclassification_pred1 +=  sample_var[k]                     
+                    k2=k2+1                 
+                k=k+1         
+        print('Average Output Variance', np.mean(pred_var))   
+        correct_classification2 = correct_classification1/k1
+        misclassification_pred2 = misclassification_pred1/k2
+                     
+        writer = pd.ExcelWriter(PATH + test_path + 'variance.xlsx', engine='xlsxwriter')
+        df = pd.DataFrame(np.abs(pred_var) )   
+        # Write your DataFrame to a file   
+        df.to_excel(writer, "Sheet")      
+        
+        df1 = pd.DataFrame(predicted_out)
+        df1.to_excel(writer, 'Sheet',  startcol=4)
+        
+        df2 = pd.DataFrame(true_out)
+        df2.to_excel(writer, 'Sheet',  startcol=7)
+        
+        df3 = pd.DataFrame(correct_classification)
+        df3.to_excel(writer, 'Sheet',  startcol=10)  
+        
+        df4 = pd.DataFrame(misclassification_pred)
+        df4.to_excel(writer, 'Sheet',  startcol=13)
+        writer.save()
+        
+        pf = open(PATH + test_path + 'var_info.pkl', 'wb')                   
+        pickle.dump([correct_classification, misclassification_true, pred_var], pf)                                                  
         pf.close()
 
         textfile = open(PATH + test_path + 'Related_hyperparameters.txt', 'w')
@@ -442,6 +502,9 @@ def main_function(input_dim=32,n_channels=3, num_kernels=[32, 32, 32, 32, 64, 64
         textfile.write('\n batch size : ' + str(batch_size))        
         textfile.write("\n---------------------------------")
         textfile.write("\n Test Accuracy : " + str(test_acc))
+        textfile.write("\n Output Variance: "+ str(np.mean(pred_var))) 
+        textfile.write("\n Correct Classification Variance: "+ str(np.mean(correct_classification2)))  
+        textfile.write("\n MisClassification Variance: "+ str(np.mean(misclassification_pred2)))
         textfile.write("\n---------------------------------")
         if Random_noise:
             textfile.write('\n Random Noise std: ' + str(gaussain_noise_std))
@@ -454,37 +517,98 @@ def main_function(input_dim=32,n_channels=3, num_kernels=[32, 32, 32, 32, 64, 64
             test_path = 'test_results_non_targeted_adversarial_noise_{}/'.format(epsilon)
         cnn_model.load_weights(PATH + 'Deterministic_cnn_model')
         cnn_model.trainable = False        
-
-        test_no_steps = 0        
+        no_samples = 20      
         true_x = np.zeros([int(x_test.shape[0] / (batch_size)), batch_size, input_dim, input_dim, n_channels])
         adv_perturbations = np.zeros([int(x_test.shape[0] / (batch_size)), batch_size, input_dim, input_dim, n_channels])
         true_y = np.zeros([int(x_test.shape[0] / (batch_size)), batch_size, class_num])
         out_ = np.zeros([int(x_test.shape[0] / (batch_size)), batch_size, class_num])        
-        acc_test = np.zeros(int(x_test.shape[0] / (batch_size)))
-        for step, (x, y) in enumerate(val_dataset):
-            update_progress(step / int(x_test.shape[0] / (batch_size)))
-            true_x[test_no_steps, :, :, :] = x
-            true_y[test_no_steps, :, :] = y
-            if Targeted:
-                y_true_batch = np.zeros_like(y)
-                y_true_batch[:, adversary_target_cls] = 1.0
-                adv_perturbations[test_no_steps, :, :, :] = (-1)*create_adversarial_pattern(x, y_true_batch)
-            else:
-                adv_perturbations[test_no_steps, :, :, :] = create_adversarial_pattern(x, y)
-            adv_x = x + epsilon * adv_perturbations[test_no_steps, :, :, :]
-            adv_x = tf.clip_by_value(adv_x, 0.0, 1.0)
+        acc_test = np.zeros([no_samples, int(x_test.shape[0] / (batch_size))])
+        
+        for i in range(no_samples): 
+            test_no_steps = 0  
+            for step, (x, y) in enumerate(val_dataset):
+                update_progress(step / int(x_test.shape[0] / (batch_size)))
+                true_x[test_no_steps, :, :, :] = x
+                true_y[test_no_steps, :, :] = y
+                if Targeted:
+                    y_true_batch = np.zeros_like(y)
+                    y_true_batch[:, adversary_target_cls] = 1.0
+                    adv_perturbations[test_no_steps, :, :, :] = (-1)*create_adversarial_pattern(x, y_true_batch)
+                else:
+                    adv_perturbations[test_no_steps, :, :, :] = create_adversarial_pattern(x, y)
+                adv_x = x + epsilon * adv_perturbations[test_no_steps, :, :, :]
+                adv_x = tf.clip_by_value(adv_x, 0.0, 1.0)
             
-            out   = test_on_batch(adv_x, y)            
-            out_[test_no_steps, :, :] = out            
-            corr = tf.equal(tf.math.argmax(out, axis=-1), tf.math.argmax(y, axis=-1))
-            accuracy = tf.reduce_mean(tf.cast(corr, tf.float32))
-            acc_test[test_no_steps]=accuracy.numpy()            
-            test_no_steps += 1
+                out   = test_on_batch(adv_x, y)            
+                out_[test_no_steps, :, :] = out            
+                corr = tf.equal(tf.math.argmax(out, axis=-1), tf.math.argmax(y, axis=-1))
+                accuracy = tf.reduce_mean(tf.cast(corr, tf.float32))
+                acc_test[i, test_no_steps]=accuracy.numpy()            
+                test_no_steps += 1
         test_acc = np.mean(np.amax(acc_test)   )         
-        print('Test accuracy : ', test_acc)        
-
+        print('Test accuracy : ', test_acc)  
+        
+        test_acc_std = np.mean(np.std(acc_test, axis=0)  )             
+        print('STD Test Accuracy : ', test_acc_std )
+        sample_var = np.std(acc_test, axis=0)
+        
         pf = open(PATH + test_path + 'info.pkl', 'wb')
         pickle.dump([out_, true_x, true_y, adv_perturbations, test_acc], pf)
+        pf.close()
+        
+        valid_size = x_test.shape[0]  
+        pred_var = np.zeros(int(valid_size ))   
+        true_var = np.zeros(int(valid_size )) 
+        correct_classification = np.zeros(int(valid_size)) 
+        misclassification_pred = np.zeros(int(valid_size )) 
+        misclassification_true = np.zeros(int(valid_size )) 
+        predicted_out = np.zeros(int(valid_size )) 
+        true_out = np.zeros(int(valid_size )) 
+        k=0   
+        k1=0
+        k2=0  
+        correct_classification1 = 0
+        misclassification_pred1 = 0
+        misclassification_true1 = 0
+        for i in range(int(valid_size /batch_size)):
+            for j in range(batch_size):               
+                predicted_out[k] = np.argmax(out_[i,j,:])
+                true_out[k] = np.argmax(true_y[i,j,:])
+                pred_var[k] =   sample_var[k]  
+               # true_var[k] = sigma_[i,j, int(true_out[k]), int(true_out[k])]  
+                if (predicted_out[k] == true_out[k]):
+                    correct_classification[k1] = sample_var[k] 
+                    correct_classification1 +=  sample_var[k] 
+                    k1=k1+1
+                if (predicted_out[k] != true_out[k]):
+                    misclassification_pred[k2] = sample_var[k]  
+                    misclassification_pred1 +=  sample_var[k]                     
+                    k2=k2+1                 
+                k=k+1         
+        print('Average Output Variance', np.mean(pred_var))   
+        correct_classification2 = correct_classification1/k1
+        misclassification_pred2 = misclassification_pred1/k2
+                     
+        writer = pd.ExcelWriter(PATH + test_path + 'variance.xlsx', engine='xlsxwriter')
+        df = pd.DataFrame(np.abs(pred_var) )   
+        # Write your DataFrame to a file   
+        df.to_excel(writer, "Sheet")      
+        
+        df1 = pd.DataFrame(predicted_out)
+        df1.to_excel(writer, 'Sheet',  startcol=4)
+        
+        df2 = pd.DataFrame(true_out)
+        df2.to_excel(writer, 'Sheet',  startcol=7)
+        
+        df3 = pd.DataFrame(correct_classification)
+        df3.to_excel(writer, 'Sheet',  startcol=10)  
+        
+        df4 = pd.DataFrame(misclassification_pred)
+        df4.to_excel(writer, 'Sheet',  startcol=13)
+        writer.save()
+        
+        pf = open(PATH + test_path + 'var_info.pkl', 'wb')                   
+        pickle.dump([correct_classification, misclassification_true, pred_var], pf)                                                  
         pf.close()
 
         textfile = open(PATH + test_path + 'Related_hyperparameters.txt', 'w')
@@ -500,6 +624,9 @@ def main_function(input_dim=32,n_channels=3, num_kernels=[32, 32, 32, 32, 64, 64
         textfile.write('\n batch size : ' + str(batch_size))        
         textfile.write("\n---------------------------------")
         textfile.write("\n Test Accuracy : " + str(test_acc))
+        textfile.write("\n Output Variance: "+ str(np.mean(pred_var))) 
+        textfile.write("\n Correct Classification Variance: "+ str(np.mean(correct_classification2)))  
+        textfile.write("\n MisClassification Variance: "+ str(np.mean(misclassification_pred2)))
         textfile.write("\n---------------------------------")
         if Adversarial_noise:
             if Targeted:
